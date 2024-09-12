@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nearmap Project Converter</title>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .container {
+            max-width: 600px;
+            margin-top: 50px;
+        }
+        .drag-drop-area {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+        }
+        .hidden {
+            display: none;
+        }
+        .modal-content {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container text-center">
+        <h1>Nearmap Project Converter</h1>
+        <div class="drag-drop-area" id="dragDropArea">
+            Drag Nearmap annotation file here or click to upload
+            <input type="file" id="fileInput" class="hidden" accept=".json">
+        </div>
+        <div class="form-group mt-3">
+            <input type="text" class="form-control" id="fileNameInput" placeholder="Enter output file name">
+        </div>
+        <button class="btn btn-primary" id="processButton" disabled>Process</button>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal fade" id="successModal" tabindex="-1" role="dialog" aria-labelledby="successModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-body">
+                    File converted :)
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+  // JavaScript for handling drag and drop, file upload, and conversion
+const dragDropArea = document.getElementById('dragDropArea');
+const fileInput = document.getElementById('fileInput');
+const processButton = document.getElementById('processButton');
+const fileNameInput = document.getElementById('fileNameInput');
+
+let uploadedFile;
+
+dragDropArea.addEventListener('click', () => fileInput.click());
+dragDropArea.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dragDropArea.style.borderColor = 'green';
+});
+dragDropArea.addEventListener('dragleave', () => dragDropArea.style.borderColor = '#ccc');
+dragDropArea.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dragDropArea.style.borderColor = '#ccc';
+    uploadedFile = event.dataTransfer.files[0];
+    dragDropArea.textContent = uploadedFile.name;
+    processButton.disabled = false;
+});
+
+fileInput.addEventListener('change', (event) => {
+    uploadedFile = event.target.files[0];
+    dragDropArea.textContent = uploadedFile.name;
+    processButton.disabled = false;
+});
+
+processButton.addEventListener('click', () => {
+    if (uploadedFile) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const data = JSON.parse(event.target.result);
+            const csv = convertToCSV(data);
+            const fileName = fileNameInput.value || 'output';
+            downloadCSV(csv, `${fileName}.csv`);
+            $('#successModal').modal('show');
+        };
+        reader.readAsText(uploadedFile);
+    }
+});
+
+// Haversine formula to calculate distance between two lat/lng points in feet
+function calculateDistance(lat1, lng1, lat2, lng2) {
+    const R = 20925524.9; // Radius of the Earth in feet
+    const radLat1 = lat1 * Math.PI / 180;
+    const radLat2 = lat2 * Math.PI / 180;
+    const deltaLat = (lat2 - lat1) * Math.PI / 180;
+    const deltaLng = (lng2 - lng1) * Math.PI / 180;
+
+    const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+              Math.cos(radLat1) * Math.cos(radLat2) *
+              Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in feet
+}
+
+function convertToCSV(data) {
+    const features = data.data.featureNodes;
+    let csv = 'ID,Name,Type,Measurement Type,Measurement,Unit\n';
+
+    features.forEach(feature => {
+        let id = feature.id;
+        let name = feature.properties.name;
+        let type = feature.properties.type;
+
+        if (type === 'line') {
+            let length = calculateLineLength(feature.geometry.coordinates);
+            let lengthUnit = feature.properties['style-context'].lineLengthUnit || 'ft';
+            csv += `${id},${name},${type},Line Length,${length.toFixed(2)},${lengthUnit}\n`;
+        } else if (type === 'circle') {
+            let radius = feature.properties.groundRadius;
+            let radiusUnit = feature.properties['style-context'].radiusUnit || 'ft';
+            csv += `${id},${name},${type},Radius,${radius},${radiusUnit}\n`;
+        } else if (type === 'rectangle') {
+            let length = feature.properties['nm-rectangle-attributes'].length;
+            let width = feature.properties['nm-rectangle-attributes'].width;
+            let lengthUnit = feature.properties['style-context'].rectangleLengthUnit || 'ft';
+            let widthUnit = feature.properties['style-context'].rectangleWidthUnit || 'ft';
+            csv += `${id},${name},${type},Length,${length},${lengthUnit}\n`;
+            csv += `${id},${name},${type},Width,${width},${widthUnit}\n`;
+        }
+    });
+
+    return csv;
+}
+
+// Function to calculate the total length of a LineString
+function calculateLineLength(coordinates) {
+    let totalLength = 0;
+    for (let i = 0; i < coordinates.length - 1; i++) {
+        const [lng1, lat1] = coordinates[i];
+        const [lng2, lat2] = coordinates[i + 1];
+        totalLength += calculateDistance(lat1, lng1, lat2, lng2);
+    }
+    return totalLength;
+}
+
+function downloadCSV(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+    </script>
+</body>
+</html>
