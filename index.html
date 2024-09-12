@@ -55,112 +55,117 @@
     <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
     <script>
-        // JavaScript for handling drag and drop, file upload, and conversion
-        const dragDropArea = document.getElementById('dragDropArea');
-        const fileInput = document.getElementById('fileInput');
-        const processButton = document.getElementById('processButton');
-        const fileNameInput = document.getElementById('fileNameInput');
+  // JavaScript for handling drag and drop, file upload, and conversion
+const dragDropArea = document.getElementById('dragDropArea');
+const fileInput = document.getElementById('fileInput');
+const processButton = document.getElementById('processButton');
+const fileNameInput = document.getElementById('fileNameInput');
 
-        let uploadedFile;
+let uploadedFile;
 
-        dragDropArea.addEventListener('click', () => fileInput.click());
-        dragDropArea.addEventListener('dragover', (event) => {
-            event.preventDefault();
-            dragDropArea.style.borderColor = 'green';
-        });
-        dragDropArea.addEventListener('dragleave', () => dragDropArea.style.borderColor = '#ccc');
-        dragDropArea.addEventListener('drop', (event) => {
-            event.preventDefault();
-            dragDropArea.style.borderColor = '#ccc';
-            uploadedFile = event.dataTransfer.files[0];
-            dragDropArea.textContent = uploadedFile.name;
-            processButton.disabled = false;
-        });
+dragDropArea.addEventListener('click', () => fileInput.click());
+dragDropArea.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dragDropArea.style.borderColor = 'green';
+});
+dragDropArea.addEventListener('dragleave', () => dragDropArea.style.borderColor = '#ccc');
+dragDropArea.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dragDropArea.style.borderColor = '#ccc';
+    uploadedFile = event.dataTransfer.files[0];
+    dragDropArea.textContent = uploadedFile.name;
+    processButton.disabled = false;
+});
 
-        fileInput.addEventListener('change', (event) => {
-            uploadedFile = event.target.files[0];
-            dragDropArea.textContent = uploadedFile.name;
-            processButton.disabled = false;
-        });
+fileInput.addEventListener('change', (event) => {
+    uploadedFile = event.target.files[0];
+    dragDropArea.textContent = uploadedFile.name;
+    processButton.disabled = false;
+});
 
-        processButton.addEventListener('click', () => {
-            if (uploadedFile) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const data = JSON.parse(event.target.result);
-                    const kml = convertToKML(data);
-                    const fileName = fileNameInput.value || 'output';
-                    downloadKML(kml, `${fileName}.kml`);
-                    $('#successModal').modal('show');
-                };
-                reader.readAsText(uploadedFile);
-            }
-        });
+processButton.addEventListener('click', () => {
+    if (uploadedFile) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const data = JSON.parse(event.target.result);
+            const csv = convertToCSV(data);
+            const fileName = fileNameInput.value || 'output';
+            downloadCSV(csv, `${fileName}.csv`);
+            $('#successModal').modal('show');
+        };
+        reader.readAsText(uploadedFile);
+    }
+});
 
-        function rgbaToKmlColor(rgba) {
-            const [r, g, b, a] = rgba;
-            return `${(a * 255).toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${r.toString(16).padStart(2, '0')}`;
+// Haversine formula to calculate distance between two lat/lng points in feet
+function calculateDistance(lat1, lng1, lat2, lng2) {
+    const R = 20925524.9; // Radius of the Earth in feet
+    const radLat1 = lat1 * Math.PI / 180;
+    const radLat2 = lat2 * Math.PI / 180;
+    const deltaLat = (lat2 - lat1) * Math.PI / 180;
+    const deltaLng = (lng2 - lng1) * Math.PI / 180;
+
+    const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+              Math.cos(radLat1) * Math.cos(radLat2) *
+              Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in feet
+}
+
+function convertToCSV(data) {
+    const features = data.data.featureNodes;
+    let csv = 'ID,Name,Type,Measurement Type,Measurement,Unit\n';
+
+    features.forEach(feature => {
+        let id = feature.id;
+        let name = feature.properties.name;
+        let type = feature.properties.type;
+
+        if (type === 'line') {
+            let length = calculateLineLength(feature.geometry.coordinates);
+            let lengthUnit = feature.properties['style-context'].lineLengthUnit || 'ft';
+            csv += `${id},${name},${type},Line Length,${length.toFixed(2)},${lengthUnit}\n`;
+        } else if (type === 'circle') {
+            let radius = feature.properties.groundRadius;
+            let radiusUnit = feature.properties['style-context'].radiusUnit || 'ft';
+            csv += `${id},${name},${type},Radius,${radius},${radiusUnit}\n`;
+        } else if (type === 'rectangle') {
+            let length = feature.properties['nm-rectangle-attributes'].length;
+            let width = feature.properties['nm-rectangle-attributes'].width;
+            let lengthUnit = feature.properties['style-context'].rectangleLengthUnit || 'ft';
+            let widthUnit = feature.properties['style-context'].rectangleWidthUnit || 'ft';
+            csv += `${id},${name},${type},Length,${length},${lengthUnit}\n`;
+            csv += `${id},${name},${type},Width,${width},${widthUnit}\n`;
         }
+    });
 
-        function convertToKML(data) {
-            const kml = [];
-            kml.push('<?xml version="1.0" encoding="UTF-8"?>');
-            kml.push('<kml xmlns="http://www.opengis.net/kml/2.2">');
-            kml.push('<Document>');
+    return csv;
+}
 
-            data.data.featureNodes.forEach(feature => {
-                const geometry = feature.geometry;
-                const properties = feature.properties;
-                const name = properties.name;
+// Function to calculate the total length of a LineString
+function calculateLineLength(coordinates) {
+    let totalLength = 0;
+    for (let i = 0; i < coordinates.length - 1; i++) {
+        const [lng1, lat1] = coordinates[i];
+        const [lng2, lat2] = coordinates[i + 1];
+        totalLength += calculateDistance(lat1, lng1, lat2, lng2);
+    }
+    return totalLength;
+}
 
-                if (geometry.type === 'Point') {
-                    const coords = geometry.coordinates;
-                    kml.push('<Placemark>');
-                    kml.push(`<name>${name}</name>`);
-                    kml.push('<Point>');
-                    kml.push(`<coordinates>${coords[0]},${coords[1]}</coordinates>`);
-                    kml.push('</Point>');
-                    kml.push('</Placemark>');
-                } else if (geometry.type === 'LineString') {
-                    const coords = geometry.coordinates.map(coord => coord.join(',')).join(' ');
-                    kml.push('<Placemark>');
-                    kml.push(`<name>${name}</name>`);
-                    kml.push('<LineString>');
-                    kml.push(`<coordinates>${coords}</coordinates>`);
-                    kml.push('</LineString>');
-                    kml.push('</Placemark>');
-                } else if (geometry.type === 'Polygon') {
-                    const coords = geometry.coordinates[0].map(coord => coord.join(',')).join(' ');
-                    kml.push('<Placemark>');
-                    kml.push(`<name>${name}</name>`);
-                    kml.push('<Polygon>');
-                    kml.push('<outerBoundaryIs>');
-                    kml.push('<LinearRing>');
-                    kml.push(`<coordinates>${coords}</coordinates>`);
-                    kml.push('</LinearRing>');
-                    kml.push('</outerBoundaryIs>');
-                    kml.push('</Polygon>');
-                    kml.push('</Placemark>');
-                }
-            });
+function downloadCSV(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
-            kml.push('</Document>');
-            kml.push('</kml>');
-
-            return kml.join('\n');
-        }
-
-        function downloadKML(kml, filename) {
-            const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
     </script>
 </body>
 </html>
